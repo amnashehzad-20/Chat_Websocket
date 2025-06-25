@@ -31,11 +31,11 @@ export const SocketProvider = ({ children }) => {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     const token = localStorage.getItem('token');
 
-    // create socket if  user data and token, and no existing socket
+    // Create socket if user data and token exist, and no existing socket
     if (user.id && token && !socket) {
       console.log('Creating new socket connection for user:', user.username);
       
-      // socket conn
+      // Create socket connection
       const newSocket = io('http://localhost:3000', {
         auth: {
           token
@@ -72,10 +72,12 @@ export const SocketProvider = ({ children }) => {
         console.log('User status change:', userId, isOnline ? 'online' : 'offline');
         setOnlineUsers(prev => {
           const newSet = new Set(prev);
+          // Convert userId to string for consistency
+          const userIdString = userId.toString();
           if (isOnline) {
-            newSet.add(userId);
+            newSet.add(userIdString);
           } else {
-            newSet.delete(userId);
+            newSet.delete(userIdString);
           }
           console.log('Updated online users:', Array.from(newSet));
           return newSet;
@@ -85,12 +87,13 @@ export const SocketProvider = ({ children }) => {
       // Get initial online users when connecting
       newSocket.on('initialOnlineUsers', (users) => {
         console.log('Initial online users:', users);
-        setOnlineUsers(new Set(users));
+        // Convert all user IDs to strings for consistency
+        const userStrings = users.map(id => id.toString());
+        setOnlineUsers(new Set(userStrings));
       });
 
       setSocket(newSocket);
 
-     
       return () => {
         console.log('Cleaning up socket connection');
         newSocket.removeAllListeners();

@@ -41,3 +41,44 @@ h1 {
     color: #747bff;
   }
 }
+
+/* Custom styles for better text wrapping */
+.overflow-wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+.hyphens-auto {
+  hyphens: auto;
+}
+
+/* Force text to break even without spaces */
+.break-all {
+  word-break: break-all;
+}
+
+/* Chat message styles */
+.chat-message {
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  white-space: pre-wrap;
+}
+
+/* Scrollbar styling for chat */
+.chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-scroll::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}

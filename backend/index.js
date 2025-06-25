@@ -38,7 +38,6 @@ app.use('/', authRoutes);
 app.use('/chat/users', userRoutes);
 app.use('/chat/messages', messageRoutes);
 
-
 const connectedUsers = {}; // userId -> socketId using plain object
 
 io.on('connection', (socket) => {
@@ -49,9 +48,12 @@ io.on('connection', (socket) => {
     try {
       const { userId } = userData;
       
-      //  user's socket connection
-      connectedUsers[userId] = socket.id;
-      socket.userId = userId;
+      // Convert userId to string to ensure consistency
+      const userIdString = userId.toString();
+      
+      // Store user's socket connection
+      connectedUsers[userIdString] = socket.id;
+      socket.userId = userIdString;
       
       // Update user's online status in database
       await User.findByIdAndUpdate(userId, {
@@ -63,13 +65,13 @@ io.on('connection', (socket) => {
       const onlineUserIds = Object.keys(connectedUsers);
       socket.emit('initialOnlineUsers', onlineUserIds);
 
-      // Notify all user online 
+      // Notify all users that this user is online 
       socket.broadcast.emit('userStatusChange', {
-        userId,
+        userId: userIdString,
         isOnline: true
       });
 
-      console.log(`User ${userId} joined with socket ${socket.id}`);
+      console.log(`User ${userIdString} joined with socket ${socket.id}`);
       console.log('Current online users:', onlineUserIds);
     } catch (error) {
       console.error('Error in join:', error);
@@ -81,14 +83,18 @@ io.on('connection', (socket) => {
     try {
       const { receiverId, content, senderId } = messageData;
       
+      // Convert IDs to strings for consistency
+      const receiverIdString = receiverId.toString();
+      const senderIdString = senderId.toString();
+      
       // Get receiver's socket ID
-      const receiverSocketId = connectedUsers[receiverId];
+      const receiverSocketId = connectedUsers[receiverIdString];
       
       // Send message to receiver if they're online
       if (receiverSocketId) {
         io.to(receiverSocketId).emit('newMessage', {
-          senderId,
-          receiverId,
+          senderId: senderIdString,
+          receiverId: receiverIdString,
           content,
           timestamp: new Date()
         });
@@ -96,7 +102,7 @@ io.on('connection', (socket) => {
       
       // Send confirmation back to sender
       socket.emit('messageDelivered', {
-        receiverId,
+        receiverId: receiverIdString,
         delivered: !!receiverSocketId
       });
       
@@ -108,14 +114,32 @@ io.on('connection', (socket) => {
 
   // Handle typing indicators
   socket.on('typing', (data) => {
-    const { receiverId, isTyping } = data;
-    const receiverSocketId = connectedUsers[receiverId];
-    
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('userTyping', {
-        userId: socket.userId,
-        isTyping
-      });
+    try {
+      const { receiverId, isTyping } = data;
+      
+      console.log('=== TYPING EVENT RECEIVED ON BACKEND ===');
+      console.log('From socket userId:', socket.userId);
+      console.log('To receiverId:', receiverId);
+      console.log('isTyping:', isTyping);
+      
+      // Convert receiverId to string for consistency
+      const receiverIdString = receiverId.toString();
+      const receiverSocketId = connectedUsers[receiverIdString];
+      
+      console.log('Receiver socket ID:', receiverSocketId);
+      console.log('Connected users:', Object.keys(connectedUsers));
+      
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit('userTyping', {
+          userId: socket.userId,
+          isTyping
+        });
+        console.log(`Sent typing indicator to ${receiverIdString}`);
+      } else {
+        console.log(` Receiver ${receiverIdString} not online`);
+      }
+    } catch (error) {
+      console.error('Error handling typing:', error);
     }
   });
 

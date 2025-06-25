@@ -33,47 +33,90 @@ export default function ChatComponent() {
     setCurrentUser(JSON.parse(userData));
   }, []);
 
-  // Socket con lis
+  // Socket connection listeners
   useEffect(() => {
     if (!socket || !currentUser) return;
 
-    // Listen for new mess
+    // Listen for new messages
     const handleNewMessage = (data) => {
       const { message } = data;
       
-      // Add message current convo
+      // Add message to current conversation
       if (selectedUser && 
           ((message.sender._id === selectedUser.id && message.receiver._id === currentUser.id) ||
            (message.sender._id === currentUser.id && message.receiver._id === selectedUser.id))) {
         setMessages(prev => [...prev, message]);
       }
       
-     //get latest message
+      // Refresh conversations to get latest message
       fetchConversations();
     };
 
-    // Listen for typing indicators
+    // Listen for typing indicators with better debugging
     const handleUserTyping = ({ userId, isTyping }) => {
-      setTypingUsers(prev => {
-        const newSet = new Set(prev);
+      console.log('=== TYPING EVENT RECEIVED ===');
+      console.log('From userId:', userId);
+      console.log('isTyping:', isTyping);
+      console.log('Current selectedUser:', selectedUser?.id);
+      console.log('userId type:', typeof userId);
+      console.log('selectedUser.id type:', typeof selectedUser?.id);
+      
+      // Convert both to strings for comparison
+      const userIdString = userId?.toString();
+      const selectedUserIdString = selectedUser?.id?.toString();
+      
+      console.log('Converted userId:', userIdString);
+      console.log('Converted selectedUser.id:', selectedUserIdString);
+      console.log('Do they match?', userIdString === selectedUserIdString);
+      
+      if (selectedUser && userIdString === selectedUserIdString) {
+        setTypingUsers(prev => {
+          const newSet = new Set(prev);
+          if (isTyping) {
+            newSet.add(userIdString);
+          } else {
+            newSet.delete(userIdString);
+          }
+          console.log('Updated typing users:', Array.from(newSet));
+          return newSet;
+        });
+        
+        // Auto-clear typing indicator after 3 seconds as a fallback
         if (isTyping) {
-          newSet.add(userId);
-        } else {
-          newSet.delete(userId);
+          setTimeout(() => {
+            setTypingUsers(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(userIdString);
+              console.log('Auto-cleared typing for:', userIdString);
+              return newSet;
+            });
+          }, 3000);
         }
-        return newSet;
-      });
+      } else {
+        console.log('Typing event ignored - not from current conversation');
+      }
     };
 
     socket.on('messageReceived', handleNewMessage);
-    // socket.on('userTyping', handleUserTyping);
+    socket.on('userTyping', handleUserTyping);
 
-  
     return () => {
       socket.off('messageReceived', handleNewMessage);
-      // socket.off('userTyping', handleUserTyping);
+      socket.off('userTyping', handleUserTyping);
     };
   }, [socket, selectedUser, currentUser]);
+
+  // Cleanup typing indicator on component unmount
+  useEffect(() => {
+    return () => {
+      if (socket && selectedUser && isTyping) {
+        socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+      }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (currentUser) {
@@ -149,6 +192,19 @@ export default function ChatComponent() {
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedUser) return;
 
+    // Stop typing indicator immediately
+    if (socket && isTyping) {
+      setIsTyping(false);
+      socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+      console.log('Stopped typing (message sent):', selectedUser.id);
+    }
+    
+    // Clear typing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+
     try {
       const response = await fetch(`${BASE_URL}/chat/messages`, {
         method: 'POST',
@@ -161,14 +217,7 @@ export default function ChatComponent() {
 
       const data = await response.json();
       if (response.ok) {
-     
         setNewMessage('');
-        
-     
-        // if (socket && isTyping) {
-        //   socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
-        //   setIsTyping(false);
-        // }
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -178,12 +227,34 @@ export default function ChatComponent() {
   const handleTyping = (e) => {
     setNewMessage(e.target.value);
     
-    if (!socket || !selectedUser) return;
+    if (!socket || !selectedUser) {
+      console.log('Cannot send typing - missing socket or selectedUser:', { socket: !!socket, selectedUser: !!selectedUser });
+      return;
+    }
 
-    // Send typing indicator
+    const inputValue = e.target.value;
+
+    // If input is empty, immediately stop typing
+    if (!inputValue.trim()) {
+      if (isTyping) {
+        setIsTyping(false);
+        socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+        console.log('Stopped typing (empty input):', selectedUser.id);
+      }
+      // Clear timeout
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    // Send typing indicator if not already typing
     if (!isTyping) {
       setIsTyping(true);
+      console.log('Emitting typing=true to:', selectedUser.id);
       socket.emit('typing', { receiverId: selectedUser.id, isTyping: true });
+      console.log('Started typing to:', selectedUser.id);
     }
 
     // Clear previous timeout
@@ -194,7 +265,9 @@ export default function ChatComponent() {
     // Set timeout to stop typing indicator
     typingTimeoutRef.current = setTimeout(() => {
       setIsTyping(false);
+      console.log('Emitting typing=false to:', selectedUser.id);
       socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+      console.log('Stopped typing (timeout):', selectedUser.id);
     }, 1000);
   };
 
@@ -223,37 +296,57 @@ export default function ChatComponent() {
   };
 
   const isUserOnline = (userId) => {
-    return onlineUsers.has(userId);
+    // Convert both IDs to strings for comparison
+    const userIdString = userId.toString();
+    const result = onlineUsers.has(userIdString);
+    console.log(`Checking online status for ${userIdString}:`, result, 'Online users:', Array.from(onlineUsers));
+    return result;
   };
 
- const getDisplayUsers = () => {
-  const conversationUserIds = conversations.map(conv => conv.participant._id);
-  const conversationUsers = conversations.map(conv => ({
-    ...conv.participant,
-    lastMessage: conv.lastMessage,
-    lastMessageAt: conv.lastMessageAt,
-    isOnline: isUserOnline(conv.participant._id) 
-  }));
-  
-  const otherUsers = users.filter(user => !conversationUserIds.includes(user._id))
-    .map(user => ({
-      ...user,
-      isOnline: isUserOnline(user._id) 
+  const getDisplayUsers = () => {
+    const conversationUserIds = conversations.map(conv => conv.participant._id);
+    const conversationUsers = conversations.map(conv => ({
+      ...conv.participant,
+      lastMessage: conv.lastMessage,
+      lastMessageAt: conv.lastMessageAt,
+      isOnline: isUserOnline(conv.participant._id) 
     }));
-  
-  return [...conversationUsers, ...otherUsers].filter(user =>
-    user.username.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-};
-const handleUserSelect = (user) => {
-  setSelectedUser({ 
-    id: user._id, 
-    username: user.username, 
-    isOnline: isUserOnline(user._id)
-  });
-};
+    
+    const otherUsers = users.filter(user => !conversationUserIds.includes(user._id))
+      .map(user => ({
+        ...user,
+        isOnline: isUserOnline(user._id) 
+      }));
+    
+    return [...conversationUsers, ...otherUsers].filter(user =>
+      user.username.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  };
 
-const handleLogout = async () => {
+  const handleUserSelect = (user) => {
+    // Clear typing users when switching conversations
+    setTypingUsers(new Set());
+    
+    // Clear current typing state
+    if (isTyping && socket && selectedUser) {
+      setIsTyping(false);
+      socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+    }
+    
+    // Clear typing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    
+    setSelectedUser({ 
+      id: user._id, 
+      username: user.username, 
+      isOnline: isUserOnline(user._id)
+    });
+  };
+
+  const handleLogout = async () => {
     try {
       // Disconnect socket first
       disconnect();
@@ -269,9 +362,12 @@ const handleLogout = async () => {
       // Clean up local storage and navigate
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      navigate('/');
+      
+      // Force a page reload to ensure clean state
+      window.location.href = '/';
     }
   };
+
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center">
@@ -319,10 +415,10 @@ const handleLogout = async () => {
 
         {/* Chat List */}
         <div className="flex-1 overflow-y-auto">
-         {getDisplayUsers().map((user) => (
+          {getDisplayUsers().map((user) => (
             <div
               key={user._id}
-              onClick={() => handleUserSelect(user)} // Use the fixed function
+              onClick={() => handleUserSelect(user)}
               className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
                 selectedUser?.id === user._id ? 'bg-purple-50 border-r-2 border-r-purple-600' : ''
               }`}
@@ -334,7 +430,7 @@ const handleLogout = async () => {
                       {user.username.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  {/* Fix: Use proper online status check */}
+                  {/* Online status indicator */}
                   {isUserOnline(user._id) && (
                     <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
                   )}
@@ -343,17 +439,23 @@ const handleLogout = async () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-gray-900 truncate">{user.username}</h3>
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-gray-500 flex-shrink-0 ml-2">
                       {user.lastMessageAt ? formatTime(user.lastMessageAt) : formatLastSeen(user.lastSeen)}
                     </span>
                   </div>
                   <p className="text-sm text-gray-600 truncate">
-                    {user.lastMessage?.content || (isUserOnline(user._id) ? 'Online' : `Last seen ${formatLastSeen(user.lastSeen)}`)}
+                    {user.lastMessage?.content ? (
+                      user.lastMessage.content.length > 30 
+                        ? `${user.lastMessage.content.substring(0, 30)}...`
+                        : user.lastMessage.content
+                    ) : (
+                      isUserOnline(user._id) ? 'Online' : `Last seen ${formatLastSeen(user.lastSeen)}`
+                    )}
                   </p>
                 </div>
               </div>
             </div>
-        ))}
+          ))}
         </div>
       </div>
 
@@ -370,17 +472,17 @@ const handleLogout = async () => {
                       {selectedUser.username.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  {selectedUser.isOnline && (
+                  {isUserOnline(selectedUser.id) && (
                     <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
                   )}
                 </div>
                 <div>
                   <h2 className="font-semibold text-gray-900">{selectedUser.username}</h2>
                   <p className="text-sm text-gray-600">
-                    {typingUsers.has(selectedUser.id) ? (
+                    {typingUsers.has(selectedUser.id.toString()) ? (
                       <span className="text-green-600">typing...</span>
                     ) : (
-                      selectedUser.isOnline ? 'Online' : 'Offline'
+                      isUserOnline(selectedUser.id) ? 'Online' : 'Offline'
                     )}
                   </p>
                 </div>
@@ -388,18 +490,20 @@ const handleLogout = async () => {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 chat-scroll">
               {messages.map((message) => {
                 const isOwn = message.sender._id === currentUser.id;
                 return (
                   <div key={message._id} className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                    <div className={`max-w-[75%] sm:max-w-[60%] md:max-w-[50%] px-3 py-2 rounded-2xl shadow-sm ${
                       isOwn 
-                        ? 'bg-purple-600 text-white' 
-                        : 'bg-gray-200 text-gray-900'
+                        ? 'bg-purple-600 text-white rounded-br-md' 
+                        : 'bg-gray-100 text-gray-900 rounded-bl-md'
                     }`}>
-                      <p className="text-sm">{message.content}</p>
-                      <p className={`text-xs mt-1 ${isOwn ? 'text-purple-100' : 'text-gray-500'}`}>
+                      <p className="text-sm chat-message leading-relaxed">
+                        {message.content}
+                      </p>
+                      <p className={`text-xs mt-1 ${isOwn ? 'text-purple-200' : 'text-gray-500'}`}>
                         {formatTime(message.createdAt)}
                       </p>
                     </div>
