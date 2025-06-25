@@ -1,8 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginSignupPage from './pages/signup_login';
 import ChatComponent from './pages/chat';
-import "./index.css"
-
+import { SocketProvider } from './context/SocketContext';
+import "./index.css";
 
 function RequireAuth({ children }) {
   const token = localStorage.getItem('token');
@@ -22,7 +22,9 @@ function App() {
         path="/chat"
         element={
           <RequireAuth>
-            <ChatComponent />
+            <SocketProvider>
+              <ChatComponent />
+            </SocketProvider>
           </RequireAuth>
         }
       />

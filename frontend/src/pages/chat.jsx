@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Send, LogOut } from 'lucide-react';
+import { Search, Send, LogOut, Wifi, WifiOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useSocket } from '../context/SocketContext';
 
 export default function ChatComponent() {
   const navigate = useNavigate();
+  const { socket, onlineUsers, isConnected, disconnect } = useSocket();
   const [users, setUsers] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
@@ -12,7 +14,10 @@ export default function ChatComponent() {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [typingUsers, setTypingUsers] = useState(new Set());
+  const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   const BASE_URL = "http://localhost:3000";
 
@@ -21,7 +26,6 @@ export default function ChatComponent() {
     const token = localStorage.getItem('token');
     
     if (!userData || !token) {
-     
       navigate('/');
       return;
     }
@@ -29,6 +33,47 @@ export default function ChatComponent() {
     setCurrentUser(JSON.parse(userData));
   }, []);
 
+  // Socket con lis
+  useEffect(() => {
+    if (!socket || !currentUser) return;
+
+    // Listen for new mess
+    const handleNewMessage = (data) => {
+      const { message } = data;
+      
+      // Add message current convo
+      if (selectedUser && 
+          ((message.sender._id === selectedUser.id && message.receiver._id === currentUser.id) ||
+           (message.sender._id === currentUser.id && message.receiver._id === selectedUser.id))) {
+        setMessages(prev => [...prev, message]);
+      }
+      
+     //get latest message
+      fetchConversations();
+    };
+
+    // Listen for typing indicators
+    const handleUserTyping = ({ userId, isTyping }) => {
+      setTypingUsers(prev => {
+        const newSet = new Set(prev);
+        if (isTyping) {
+          newSet.add(userId);
+        } else {
+          newSet.delete(userId);
+        }
+        return newSet;
+      });
+    };
+
+    socket.on('messageReceived', handleNewMessage);
+    // socket.on('userTyping', handleUserTyping);
+
+  
+    return () => {
+      socket.off('messageReceived', handleNewMessage);
+      // socket.off('userTyping', handleUserTyping);
+    };
+  }, [socket, selectedUser, currentUser]);
 
   useEffect(() => {
     if (currentUser) {
@@ -37,14 +82,12 @@ export default function ChatComponent() {
     }
   }, [currentUser]);
 
-  
   useEffect(() => {
     if (selectedUser) {
       fetchMessages(selectedUser.id);
     }
   }, [selectedUser]);
 
- 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
@@ -96,6 +139,7 @@ export default function ChatComponent() {
       const data = await response.json();
       if (response.ok) {
         setMessages(data.messages);
+        console.log('Fetched messages:', data.messages);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -117,13 +161,41 @@ export default function ChatComponent() {
 
       const data = await response.json();
       if (response.ok) {
-        setMessages(prev => [...prev, data.data]);
+     
         setNewMessage('');
-        fetchConversations(); // Refresh conversations
+        
+     
+        // if (socket && isTyping) {
+        //   socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+        //   setIsTyping(false);
+        // }
       }
     } catch (error) {
       console.error('Error sending message:', error);
     }
+  };
+
+  const handleTyping = (e) => {
+    setNewMessage(e.target.value);
+    
+    if (!socket || !selectedUser) return;
+
+    // Send typing indicator
+    if (!isTyping) {
+      setIsTyping(true);
+      socket.emit('typing', { receiverId: selectedUser.id, isTyping: true });
+    }
+
+    // Clear previous timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Set timeout to stop typing indicator
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+      socket.emit('typing', { receiverId: selectedUser.id, isTyping: false });
+    }, 1000);
   };
 
   const handleKeyPress = (e) => {
@@ -139,7 +211,8 @@ export default function ChatComponent() {
   };
 
   const formatLastSeen = (lastSeen) => {
-    if (!lastSeen) return 'Never';
+    if (!lastSeen) 
+      return 'Never';
     const date = new Date(lastSeen);
     const now = new Date();
     const diffInHours = (now - date) / (1000 * 60 * 60);
@@ -149,35 +222,56 @@ export default function ChatComponent() {
     return date.toLocaleDateString();
   };
 
-  const filteredUsers = users.filter(user => 
+  const isUserOnline = (userId) => {
+    return onlineUsers.has(userId);
+  };
+
+ const getDisplayUsers = () => {
+  const conversationUserIds = conversations.map(conv => conv.participant._id);
+  const conversationUsers = conversations.map(conv => ({
+    ...conv.participant,
+    lastMessage: conv.lastMessage,
+    lastMessageAt: conv.lastMessageAt,
+    isOnline: isUserOnline(conv.participant._id) 
+  }));
+  
+  const otherUsers = users.filter(user => !conversationUserIds.includes(user._id))
+    .map(user => ({
+      ...user,
+      isOnline: isUserOnline(user._id) 
+    }));
+  
+  return [...conversationUsers, ...otherUsers].filter(user =>
     user.username.toLowerCase().includes(searchQuery.toLowerCase())
   );
+};
+const handleUserSelect = (user) => {
+  setSelectedUser({ 
+    id: user._id, 
+    username: user.username, 
+    isOnline: isUserOnline(user._id)
+  });
+};
 
-  const getDisplayUsers = () => {
-   
-    const conversationUserIds = conversations.map(conv => conv.participant._id);
-    const conversationUsers = conversations.map(conv => ({
-      ...conv.participant,
-      lastMessage: conv.lastMessage,
-      lastMessageAt: conv.lastMessageAt
-    }));
-    
-    const otherUsers = users.filter(user => !conversationUserIds.includes(user._id));
-    
-    return [...conversationUsers, ...otherUsers].filter(user =>
-      user.username.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  };
-
-  const handleLogout = async () => {
+const handleLogout = async () => {
     try {
-      await fetch(`${BASE_URL}/logout`, { method: 'POST', headers: getAuthHeaders() });
-    } catch {}
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/');
+      // Disconnect socket first
+      disconnect();
+      
+      // Then call logout API
+      await fetch(`${BASE_URL}/logout`, { 
+        method: 'POST', 
+        headers: getAuthHeaders() 
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      // Clean up local storage and navigate
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      navigate('/');
+    }
   };
-
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center">
@@ -188,12 +282,18 @@ export default function ChatComponent() {
 
   return (
     <div className="h-screen min-w-full flex bg-gray-50">
-  
+      {/* Sidebar */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-     
         {/* Sidebar Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-800">Chats</h1>
+          <div className="flex items-center space-x-2">
+            <h1 className="text-2xl font-bold text-gray-800">Chats</h1>
+            {isConnected ? (
+              <Wifi className="w-5 h-5 text-green-500" />
+            ) : (
+              <WifiOff className="w-5 h-5 text-red-500" />
+            )}
+          </div>
           <button
             onClick={handleLogout}
             className="p-2 text-purple-600 hover:text-purple-500 rounded transition-colors"
@@ -204,7 +304,6 @@ export default function ChatComponent() {
         </div>
 
         <div className="p-4 border-b border-gray-200">
-          
           {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -214,16 +313,16 @@ export default function ChatComponent() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-gray-100 text-gray-900 border-0 rounded-lg focus:bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none"
-             />
+            />
           </div>
         </div>
 
         {/* Chat List */}
         <div className="flex-1 overflow-y-auto">
-          {getDisplayUsers().map((user) => (
+         {getDisplayUsers().map((user) => (
             <div
               key={user._id}
-              onClick={() => setSelectedUser({ id: user._id, username: user.username, isOnline: user.isOnline })}
+              onClick={() => handleUserSelect(user)} // Use the fixed function
               className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
                 selectedUser?.id === user._id ? 'bg-purple-50 border-r-2 border-r-purple-600' : ''
               }`}
@@ -235,7 +334,8 @@ export default function ChatComponent() {
                       {user.username.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  {user.isOnline && (
+                  {/* Fix: Use proper online status check */}
+                  {isUserOnline(user._id) && (
                     <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
                   )}
                 </div>
@@ -248,12 +348,12 @@ export default function ChatComponent() {
                     </span>
                   </div>
                   <p className="text-sm text-gray-600 truncate">
-                    {user.lastMessage?.content || (user.isOnline ? 'Online' : `Last seen ${formatLastSeen(user.lastSeen)}`)}
+                    {user.lastMessage?.content || (isUserOnline(user._id) ? 'Online' : `Last seen ${formatLastSeen(user.lastSeen)}`)}
                   </p>
                 </div>
               </div>
             </div>
-          ))}
+        ))}
         </div>
       </div>
 
@@ -263,7 +363,6 @@ export default function ChatComponent() {
           <>
             {/* Chat Header */}
             <div className="bg-white border-b border-gray-200 p-4 flex items-center justify-between w-full">
-              
               <div className="flex items-center space-x-3">
                 <div className="relative">
                   <div className="w-10 h-10 bg-gradient-to-br from-purple-400 to-purple-600 rounded-full flex items-center justify-center">
@@ -278,12 +377,15 @@ export default function ChatComponent() {
                 <div>
                   <h2 className="font-semibold text-gray-900">{selectedUser.username}</h2>
                   <p className="text-sm text-gray-600">
-                    {selectedUser.isOnline ? 'Online' : 'Offline'}
+                    {typingUsers.has(selectedUser.id) ? (
+                      <span className="text-green-600">typing...</span>
+                    ) : (
+                      selectedUser.isOnline ? 'Online' : 'Offline'
+                    )}
                   </p>
                 </div>
               </div>
-
-             </div>
+            </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -315,7 +417,7 @@ export default function ChatComponent() {
                     type="text"
                     placeholder="Type a message..."
                     value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
+                    onChange={handleTyping}
                     onKeyPress={handleKeyPress}
                     className="w-full px-4 py-3 bg-gray-100 border-0 rounded-full focus:bg-white focus:ring-2 focus:ring-purple-500 focus:outline-none text-gray-900"
                   />

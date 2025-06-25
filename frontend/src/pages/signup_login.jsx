@@ -20,7 +20,7 @@ export default function LoginSignupPage() {
       ...formData,
       [e.target.name]: e.target.value
     });
-    // Clear error when user starts typing
+   
     if (error) setError('');
   };
 
@@ -49,13 +49,11 @@ export default function LoginSignupPage() {
       const data = await response.json();
 
       if (response.ok) {
-        // Store token in localStorage
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         
         setSuccess(data.message);
         console.log('Success:', data);
-        // Redirect to chat page using navigate
         navigate('/chat');
         
       } else {

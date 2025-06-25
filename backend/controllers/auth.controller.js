@@ -16,7 +16,7 @@ const authController = {
         return res.status(400).json({ message: 'Password must be at least 6 characters' });
       }
 
-      // Check if user exists
+
       const existingUser = await User.findOne({
         $or: [{ email }, { username }]
       });
@@ -27,18 +27,15 @@ const authController = {
         });
       }
 
-      // Hash password
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
-
-      // Create user
       const user = await User.create({
         username,
         email,
         password: hashedPassword
       });
 
-      // Generate token
+     
       const token = generateToken(user._id);
 
       res.status(201).json({

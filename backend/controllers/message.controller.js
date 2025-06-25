@@ -51,6 +51,16 @@ const messageController = {
       await message.populate('sender', 'username');
       await message.populate('receiver', 'username');
 
+      // Get Socket.IO instance and emit real-time message
+      const io = req.app.get('io');
+      if (io) {
+        // Emit to all connected clients (they'll filter on frontend)
+        io.emit('messageReceived', {
+          message: message,
+          conversationId: conversation._id
+        });
+      }
+
       res.status(201).json({
         message: 'Message sent successfully',
         data: message
